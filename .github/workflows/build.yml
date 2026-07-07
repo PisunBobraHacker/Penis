@@ -1,7 +1,9 @@
-name: Build TF2 Cheat
+name: Build TF2 Cheat Suite
 
 on:
   push:
+    branches: [ main, master ]
+  pull_request:
     branches: [ main, master ]
   release:
     types: [ created ]
@@ -12,77 +14,104 @@ jobs:
     runs-on: windows-latest
     
     steps:
-    - name: Checkout
-      uses: actions/checkout@v3
+    - name: Checkout code
+      uses: actions/checkout@v4
     
     - name: Setup MSVC
       uses: ilammy/msvc-dev-cmd@v1
     
-    - name: Install dependencies
-      shell: bash
-      run: |
-        mkdir libs
-        git clone --depth 1 https://github.com/ocornut/imgui.git libs/imgui
-        git clone --depth 1 https://github.com/TsudaKageyu/minhook.git libs/minhook
-        mkdir build
-        mkdir sfx_package
-    
-    - name: Build Cheat DLL (C++)
+    - name: Build Cheat DLL
       shell: cmd
       run: |
-        :: Компилируем как C++ с правильными include путями
+        echo Building tf2cheat.dll...
         cl /nologo /O2 /GS- /W0 /LD /MT /TP ^
-           /I"libs\imgui" /I"libs\imgui\backends" /I"libs\minhook\include" ^
            tf2cheat.c ^
-           libs\imgui\*.cpp ^
-           libs\imgui\backends\imgui_impl_win32.cpp ^
-           libs\imgui\backends\imgui_impl_dx9.cpp ^
-           libs\minhook\src\*.c ^
-           /link /OUT:build\tf2cheat.dll ^
-           /PDB:NONE ^
-           user32.lib gdi32.lib opengl32.lib d3d9.lib advapi32.lib
+           /link /OUT:tf2cheat.dll /PDB:NONE ^
+           user32.lib gdi32.lib d3d9.lib advapi32.lib
+        if %errorlevel% neq 0 exit /b %errorlevel%
+        echo [OK] tf2cheat.dll built!
     
-    - name: Build Launcher
+    - name: Build Injector
       shell: cmd
       run: |
+        echo Building TF2Injector.exe...
         cl /nologo /O2 /GS- /W0 /MT ^
-           /DNDEBUG /D_WIN32_WINNT=0x0600 ^
-           TF2Launcher.c ^
-           /link /OUT:build\TF2Launcher.exe ^
-           /SUBSYSTEM:WINDOWS ^
-           kernel32.lib user32.lib advapi32.lib shell32.lib shlwapi.lib ole32.lib
+           injector.c ^
+           /link /OUT:TF2Injector.exe /SUBSYSTEM:WINDOWS ^
+           user32.lib gdi32.lib advapi32.lib comctl32.lib shell32.lib
+        if %errorlevel% neq 0 exit /b %errorlevel%
+        echo [OK] TF2Injector.exe built!
     
-    - name: Create SFX package
+    - name: Create launcher scripts
       shell: cmd
       run: |
-        copy build\tf2cheat.dll sfx_package\
-        copy build\TF2Launcher.exe sfx_package\
-        
-        echo Creating SFX config...
-        echo ;!@Install@!UTF-8! > sfx_package\sfx_config.txt
-        echo Title="TF2 Cheat" >> sfx_package\sfx_config.txt
-        echo BeginPrompt="" >> sfx_package\sfx_config.txt
-        echo ExecuteFile="TF2Launcher.exe" >> sfx_package\sfx_config.txt
-        echo ExecuteParameters="-silent -hide" >> sfx_package\sfx_config.txt
-        echo ExtractTemporary="off" >> sfx_package\sfx_config.txt
-        echo InstallPath="%TEMP%\\TF2Cheat" >> sfx_package\sfx_config.txt
-        echo ;!@InstallEnd@! >> sfx_package\sfx_config.txt
-    
-    - name: Create SFX with 7-Zip
-      shell: pwsh
-      run: |
-        choco install 7zip -y
-        cd sfx_package
-        & "C:\Program Files\7-Zip\7z.exe" a -t7z -mx9 -m0=LZMA2 tf2cheat.7z * -x!sfx_config.txt
-        Invoke-WebRequest -Uri "https://raw.githubusercontent.com/ip7z/7zip/main/7zS.sfx" -OutFile "7zS.sfx"
-        copy /b 7zS.sfx + sfx_config.txt + tf2cheat.7z TF2CheatInstaller.exe
-        cd ..
+        echo @echo off > RUN_ME.bat
+        echo title TF2 Cheat Launcher >> RUN_ME.bat
+        echo color 0A >> RUN_ME.bat
+        echo echo ======================================== >> RUN_ME.bat
+        echo echo    TF2 CHEAT LAUNCHER >> RUN_ME.bat
+        echo echo ======================================== >> RUN_ME.bat
+        echo echo. >> RUN_ME.bat
+        echo if not exist "tf2cheat.dll" ( >> RUN_ME.bat
+        echo     echo [!] tf2cheat.dll not found! >> RUN_ME.bat
+        echo     echo [!] Please run build_all.bat first. >> RUN_ME.bat
+        echo     pause >> RUN_ME.bat
+        echo     exit /b 1 >> RUN_ME.bat
+        echo ) >> RUN_ME.bat
+        echo if not exist "TF2Injector.exe" ( >> RUN_ME.bat
+        echo     echo [!] TF2Injector.exe not found! >> RUN_ME.bat
+        echo     echo [!] Please run build_all.bat first. >> RUN_ME.bat
+        echo     pause >> RUN_ME.bat
+        echo     exit /b 1 >> RUN_ME.bat
+        echo ) >> RUN_ME.bat
+        echo echo [*] Starting Injector... >> RUN_ME.bat
+        echo start "" TF2Injector.exe >> RUN_ME.bat
+        echo echo [OK] Injector started! >> RUN_ME.bat
+        echo echo. >> RUN_ME.bat
+        echo echo [*] Waiting for TF2 to start... >> RUN_ME.bat
+        echo echo [*] Injection happens automatically >> RUN_ME.bat
+        echo echo [*] Press INSERT in game to open menu >> RUN_ME.bat
+        echo echo. >> RUN_ME.bat
+        echo echo ======================================== >> RUN_ME.bat
+        echo echo    INJECTOR IS RUNNING >> RUN_ME.bat
+        echo echo ======================================== >> RUN_ME.bat
+        echo echo. >> RUN_ME.bat
+        echo echo Close this window when done. >> RUN_ME.bat
+        echo echo. >> RUN_ME.bat
+        echo timeout /t 3 /nobreak >nul >> RUN_ME.bat
+        echo echo [*] Injector is running in background >> RUN_ME.bat
+        echo echo [*] Check system tray for status >> RUN_ME.bat
+        echo echo. >> RUN_ME.bat
+        echo pause >> RUN_ME.bat
     
     - name: Upload artifacts
       uses: actions/upload-artifact@v4
       with:
-        name: tf2cheat
+        name: TF2Cheat
         path: |
-          build\tf2cheat.dll
-          build\TF2Launcher.exe
-          sfx_package\TF2CheatInstaller.exe
+          tf2cheat.dll
+          TF2Injector.exe
+          RUN_ME.bat
+          README.md
+    
+    - name: Upload to release
+      if: github.event_name == 'release'
+      uses: actions/upload-release-asset@v1
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      with:
+        upload_url: ${{ github.event.release.upload_url }}
+        asset_path: ./tf2cheat.dll
+        asset_name: tf2cheat.dll
+        asset_content_type: application/octet-stream
+    
+    - name: Upload injector to release
+      if: github.event_name == 'release'
+      uses: actions/upload-release-asset@v1
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      with:
+        upload_url: ${{ github.event.release.upload_url }}
+        asset_path: ./TF2Injector.exe
+        asset_name: TF2Injector.exe
+        asset_content_type: application/vnd.microsoft.portable-executable
