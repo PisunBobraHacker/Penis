@@ -1,8 +1,7 @@
 /*
  * ============================================================
- * SILENT_INJECTOR.C — TF2 Cheat Silent Injector
- * Без окон, без консолей, без следов
- * Всё делает молча и незаметно
+ * INJECTOR.C — TF2 Cheat Universal Injector
+ * Установка + инжект + лаунчер в одном файле
  * ============================================================
  */
 
@@ -14,28 +13,36 @@
 #include <stdlib.h>
 #include <string.h>
 #include <tlhelp32.h>
-#include <psapi.h>
+#include <shlobj.h>
+#include <shlwapi.h>
 #include <time.h>
 
-#pragma comment(lib, "kernel32.lib")
-#pragma comment(lib, "user32.lib")
+#pragma comment(lib, "shell32.lib")
+#pragma comment(lib, "shlwapi.lib")
+#pragma comment(lib, "ole32.lib")
 #pragma comment(lib, "advapi32.lib")
 
 // ============================================================
-// 1. ПЕРЕМЕННЫЕ
+// 1. ПУТИ
 // ============================================================
 
+#define PROGRAM_DATA "C:\\ProgramData\\TF2CHEAT"
+#define UTILS_FOLDER "C:\\ProgramData\\TF2CHEAT\\utils"
+#define DLL_NAME "tf2cheat.dll"
+
+char g_install_path[MAX_PATH];
 char g_dll_path[MAX_PATH];
-char g_log_path[MAX_PATH];
-bool g_silent = true;
-bool g_log = false;
+char g_current_exe[MAX_PATH];
+bool g_installed = false;
 
 // ============================================================
-// 2. ЛОГИРОВАНИЕ (Только в файл, без консоли)
+// 2. ЛОГИРОВАНИЕ (в файл, если есть)
 // ============================================================
 
 void write_log(const char* msg, ...) {
-    if (!g_log) return;
+    char log_path[MAX_PATH];
+    strcpy(log_path, UTILS_FOLDER);
+    strcat(log_path, "\\inject.log");
     
     char buffer[1024];
     va_list args;
@@ -43,7 +50,7 @@ void write_log(const char* msg, ...) {
     vsprintf(buffer, msg, args);
     va_end(args);
     
-    HANDLE file = CreateFileA(g_log_path, FILE_APPEND_DATA, FILE_SHARE_READ, NULL, OPEN_ALWAYS, FILE_ATTRIBUTE_HIDDEN, NULL);
+    HANDLE file = CreateFileA(log_path, FILE_APPEND_DATA, FILE_SHARE_READ, NULL, OPEN_ALWAYS, FILE_ATTRIBUTE_HIDDEN, NULL);
     if (file != INVALID_HANDLE_VALUE) {
         DWORD written;
         WriteFile(file, buffer, strlen(buffer), &written, NULL);
@@ -53,180 +60,237 @@ void write_log(const char* msg, ...) {
 }
 
 // ============================================================
-// 3. ИНИЦИАЛИЗАЦИЯ
+// 3. СОЗДАНИЕ ПАПОК
 // ============================================================
 
-void init_paths() {
-    // Получаем путь к DLL (лежит рядом с инжектором)
-    GetModuleFileNameA(NULL, g_dll_path, MAX_PATH);
-    char* last_slash = strrchr(g_dll_path, '\\');
-    if (last_slash) {
-        strcpy(last_slash + 1, "tf2cheat.dll");
-    }
-    
-    // Путь к логу (в AppData, чтобы не светиться)
-    GetEnvironmentVariableA("APPDATA", g_log_path, MAX_PATH);
-    strcat(g_log_path, "\\TF2Cheat\\inject.log");
-    
-    // Создаём папку, если её нет
-    char folder[MAX_PATH];
-    strcpy(folder, g_log_path);
-    char* last = strrchr(folder, '\\');
-    if (last) {
-        *last = 0;
-        CreateDirectoryA(folder, NULL);
-        SetFileAttributesA(folder, FILE_ATTRIBUTE_HIDDEN);
-    }
-    
-    // Скрываем файл лога
-    SetFileAttributesA(g_log_path, FILE_ATTRIBUTE_HIDDEN);
-}
-
-// ============================================================
-// 4. ПОИСК ПРОЦЕССА
-// ============================================================
-
-DWORD find_process(const char* process_name) {
-    HANDLE snapshot = CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0);
-    if (snapshot == INVALID_HANDLE_VALUE) {
-        write_log("[!] Failed to create process snapshot");
-        return 0;
-    }
-    
-    PROCESSENTRY32 entry = { sizeof(PROCESSENTRY32) };
-    DWORD pid = 0;
-    int attempts = 0;
-    
-    // Ждём запуска процесса (до 10 секунд)
-    while (pid == 0 && attempts < 20) {
-        if (Process32First(snapshot, &entry)) {
-            do {
-                if (strcmp(entry.szExeFile, process_name) == 0) {
-                    pid = entry.th32ProcessID;
-                    write_log("[+] Found %s (PID: %d)", process_name, pid);
-                    break;
-                }
-            } while (Process32Next(snapshot, &entry));
-        }
-        
-        if (pid == 0) {
-            Sleep(500);
-            attempts++;
-            // Пересоздаём снэпшот
-            CloseHandle(snapshot);
-            snapshot = CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0);
+bool create_directories() {
+    // Создаём ProgramData\TF2CHEAT
+    if (!CreateDirectoryA(PROGRAM_DATA, NULL)) {
+        if (GetLastError() != ERROR_ALREADY_EXISTS) {
+            write_log("[!] Failed to create ProgramData\\TF2CHEAT");
+            return false;
         }
     }
+    SetFileAttributesA(PROGRAM_DATA, FILE_ATTRIBUTE_HIDDEN);
     
-    CloseHandle(snapshot);
-    return pid;
-}
-
-// ============================================================
-// 5. ОСТАНОВКА VAC (Через драйвер)
-// ============================================================
-
-bool stop_vac() {
-    write_log("[*] Attempting to stop VAC...");
-    
-    // Ищем драйвер VAC
-    HANDLE vac_driver = CreateFileA("\\\\.\\VAC", GENERIC_READ | GENERIC_WRITE, 0, NULL, OPEN_EXISTING, 0, NULL);
-    if (vac_driver != INVALID_HANDLE_VALUE) {
-        DWORD bytes_returned;
-        // Отправляем IOCTL на отключение VAC
-        DeviceIoControl(vac_driver, 0x12345678, NULL, 0, NULL, 0, &bytes_returned, NULL);
-        CloseHandle(vac_driver);
-        write_log("[+] VAC stopped");
-        return true;
+    // Создаём ProgramData\TF2CHEAT\utils
+    if (!CreateDirectoryA(UTILS_FOLDER, NULL)) {
+        if (GetLastError() != ERROR_ALREADY_EXISTS) {
+            write_log("[!] Failed to create utils folder");
+            return false;
+        }
     }
+    SetFileAttributesA(UTILS_FOLDER, FILE_ATTRIBUTE_HIDDEN);
     
-    // Альтернатива: находим VAC модули в памяти и обнуляем
-    DWORD pid = find_process("hl2.exe");
-    if (pid == 0) pid = find_process("tf2.exe");
-    if (pid == 0) return false;
-    
-    HANDLE process = OpenProcess(PROCESS_ALL_ACCESS, FALSE, pid);
-    if (!process) return false;
-    
-    // Ищем модули VAC
-    HANDLE snapshot = CreateToolhelp32Snapshot(TH32CS_SNAPMODULE, pid);
-    if (snapshot == INVALID_HANDLE_VALUE) {
-        CloseHandle(process);
-        return false;
-    }
-    
-    MODULEENTRY32 entry = { sizeof(MODULEENTRY32) };
-    if (Module32First(snapshot, &entry)) {
-        do {
-            if (strstr(entry.szModule, "vac") || strstr(entry.szModule, "VAC")) {
-                write_log("[*] Found VAC module: %s at 0x%p", entry.szModule, entry.modBaseAddr);
-                // Обнуляем память модуля
-                DWORD old_protect;
-                VirtualProtectEx(process, entry.modBaseAddr, entry.modBaseSize, PAGE_EXECUTE_READWRITE, &old_protect);
-                ZeroMemory(entry.modBaseAddr, entry.modBaseSize);
-                VirtualProtectEx(process, entry.modBaseAddr, entry.modBaseSize, old_protect, &old_protect);
-                write_log("[+] VAC module disabled");
-            }
-        } while (Module32Next(snapshot, &entry));
-    }
-    
-    CloseHandle(snapshot);
-    CloseHandle(process);
     return true;
 }
 
 // ============================================================
-// 6. ИНЖЕКТ ЧЕРЕЗ LOADLIBRARY (Обычный)
+// 4. КОПИРОВАНИЕ DLL
 // ============================================================
 
-bool inject_dll_loadlibrary(HANDLE process, const char* dll_path) {
+bool copy_dll() {
+    // Определяем, откуда копировать DLL
+    char source_dll[MAX_PATH];
+    
+    // Проверяем в папке с инжектором
+    strcpy(source_dll, g_current_exe);
+    char* last_slash = strrchr(source_dll, '\\');
+    if (last_slash) {
+        strcpy(last_slash + 1, DLL_NAME);
+    }
+    
+    if (GetFileAttributesA(source_dll) == INVALID_FILE_ATTRIBUTES) {
+        // Проверяем в текущей папке
+        GetCurrentDirectoryA(MAX_PATH, source_dll);
+        strcat(source_dll, "\\");
+        strcat(source_dll, DLL_NAME);
+    }
+    
+    if (GetFileAttributesA(source_dll) == INVALID_FILE_ATTRIBUTES) {
+        // Проверяем в папке с установщиком
+        GetModuleFileNameA(NULL, source_dll, MAX_PATH);
+        last_slash = strrchr(source_dll, '\\');
+        if (last_slash) {
+            strcpy(last_slash + 1, DLL_NAME);
+        }
+    }
+    
+    if (GetFileAttributesA(source_dll) == INVALID_FILE_ATTRIBUTES) {
+        write_log("[!] DLL not found: %s", source_dll);
+        return false;
+    }
+    
+    write_log("[+] Found DLL: %s", source_dll);
+    
+    // Копируем в ProgramData
+    if (!CopyFileA(source_dll, g_dll_path, FALSE)) {
+        write_log("[!] Failed to copy DLL");
+        return false;
+    }
+    
+    SetFileAttributesA(g_dll_path, FILE_ATTRIBUTE_HIDDEN);
+    write_log("[+] DLL installed to: %s", g_dll_path);
+    
+    return true;
+}
+
+// ============================================================
+// 5. СОЗДАНИЕ ЯРЛЫКА НА РАБОЧЕМ СТОЛЕ
+// ============================================================
+
+bool create_shortcut() {
+    IShellLinkA* pShellLink = NULL;
+    IPersistFile* pPersistFile = NULL;
+    
+    CoInitialize(NULL);
+    
+    if (FAILED(CoCreateInstance(&CLSID_ShellLink, NULL, CLSCTX_INPROC_SERVER, &IID_IShellLinkA, (LPVOID*)&pShellLink))) {
+        CoUninitialize();
+        write_log("[!] Failed to create shell link");
+        return false;
+    }
+    
+    // Путь к этому же инжектору
+    pShellLink->lpVtbl->SetPath(pShellLink, g_current_exe);
+    pShellLink->lpVtbl->SetWorkingDirectory(pShellLink, g_install_path);
+    pShellLink->lpVtbl->SetDescription(pShellLink, "TF2 Cheat Launcher");
+    pShellLink->lpVtbl->SetShowCmd(pShellLink, SW_HIDE);
+    
+    // Сохраняем на рабочий стол
+    char desktop[MAX_PATH];
+    if (SUCCEEDED(SHGetFolderPathA(NULL, CSIDL_DESKTOP, NULL, 0, desktop))) {
+        strcat(desktop, "\\TF2Launcher.lnk");
+        
+        if (FAILED(pShellLink->lpVtbl->QueryInterface(pShellLink, &IID_IPersistFile, (LPVOID*)&pPersistFile))) {
+            pShellLink->lpVtbl->Release(pShellLink);
+            CoUninitialize();
+            write_log("[!] Failed to get persist file");
+            return false;
+        }
+        
+        WCHAR wide_desktop[MAX_PATH];
+        MultiByteToWideChar(CP_ACP, 0, desktop, -1, wide_desktop, MAX_PATH);
+        pPersistFile->lpVtbl->Save(pPersistFile, wide_desktop, TRUE);
+        pPersistFile->lpVtbl->Release(pPersistFile);
+        
+        write_log("[+] Shortcut created: %s", desktop);
+    }
+    
+    pShellLink->lpVtbl->Release(pShellLink);
+    CoUninitialize();
+    return true;
+}
+
+// ============================================================
+// 6. ПОИСК STEAM
+// ============================================================
+
+char* find_steam() {
+    static char steam_path[MAX_PATH];
+    DWORD size = MAX_PATH;
+    HKEY hKey;
+    
+    // HKEY_CURRENT_USER
+    if (RegOpenKeyExA(HKEY_CURRENT_USER, "Software\\Valve\\Steam", 0, KEY_READ, &hKey) == ERROR_SUCCESS) {
+        if (RegQueryValueExA(hKey, "SteamPath", NULL, NULL, (LPBYTE)steam_path, &size) == ERROR_SUCCESS) {
+            RegCloseKey(hKey);
+            return steam_path;
+        }
+        RegCloseKey(hKey);
+    }
+    
+    // HKEY_LOCAL_MACHINE
+    size = MAX_PATH;
+    if (RegOpenKeyExA(HKEY_LOCAL_MACHINE, "SOFTWARE\\Valve\\Steam", 0, KEY_READ, &hKey) == ERROR_SUCCESS) {
+        if (RegQueryValueExA(hKey, "InstallPath", NULL, NULL, (LPBYTE)steam_path, &size) == ERROR_SUCCESS) {
+            RegCloseKey(hKey);
+            return steam_path;
+        }
+        RegCloseKey(hKey);
+    }
+    
+    // Стандартные пути
+    const char* paths[] = {
+        "C:\\Program Files (x86)\\Steam",
+        "C:\\Program Files\\Steam",
+        "D:\\Program Files (x86)\\Steam",
+        "D:\\Program Files\\Steam"
+    };
+    
+    for (int i = 0; i < 4; i++) {
+        char test[MAX_PATH];
+        sprintf(test, "%s\\steam.exe", paths[i]);
+        if (GetFileAttributesA(test) != INVALID_FILE_ATTRIBUTES) {
+            strcpy(steam_path, paths[i]);
+            return steam_path;
+        }
+    }
+    
+    return NULL;
+}
+
+// ============================================================
+// 7. ПОИСК ПРОЦЕССА TF2
+// ============================================================
+
+DWORD find_process(const char* name) {
+    HANDLE snap = CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0);
+    if (snap == INVALID_HANDLE_VALUE) return 0;
+    
+    PROCESSENTRY32 entry = { sizeof(PROCESSENTRY32) };
+    DWORD pid = 0;
+    
+    if (Process32First(snap, &entry)) {
+        do {
+            if (strcmp(entry.szExeFile, name) == 0) {
+                pid = entry.th32ProcessID;
+                break;
+            }
+        } while (Process32Next(snap, &entry));
+    }
+    
+    CloseHandle(snap);
+    return pid;
+}
+
+// ============================================================
+// 8. ИНЖЕКТ (3 метода)
+// ============================================================
+
+bool inject_method1_loadlibrary(HANDLE process) {
     write_log("[*] Injecting via LoadLibraryA...");
     
     HMODULE kernel32 = GetModuleHandleA("kernel32.dll");
-    if (!kernel32) {
-        write_log("[!] Failed to get kernel32.dll handle");
-        return false;
-    }
+    if (!kernel32) return false;
     
     LPVOID load_library = (LPVOID)GetProcAddress(kernel32, "LoadLibraryA");
-    if (!load_library) {
-        write_log("[!] Failed to get LoadLibraryA address");
-        return false;
-    }
+    if (!load_library) return false;
     
-    size_t path_len = strlen(dll_path) + 1;
+    size_t path_len = strlen(g_dll_path) + 1;
     LPVOID remote_mem = VirtualAllocEx(process, NULL, path_len, MEM_COMMIT | MEM_RESERVE, PAGE_READWRITE);
-    if (!remote_mem) {
-        write_log("[!] Failed to allocate memory in target process");
-        return false;
-    }
+    if (!remote_mem) return false;
     
-    if (!WriteProcessMemory(process, remote_mem, dll_path, path_len, NULL)) {
-        write_log("[!] Failed to write memory in target process");
+    if (!WriteProcessMemory(process, remote_mem, g_dll_path, path_len, NULL)) {
         VirtualFreeEx(process, remote_mem, 0, MEM_RELEASE);
         return false;
     }
     
     HANDLE thread = CreateRemoteThread(process, NULL, 0, (LPTHREAD_START_ROUTINE)load_library, remote_mem, 0, NULL);
     if (!thread) {
-        write_log("[!] Failed to create remote thread");
         VirtualFreeEx(process, remote_mem, 0, MEM_RELEASE);
         return false;
     }
     
-    WaitForSingleObject(thread, 5000); // Ждём 5 секунд
+    WaitForSingleObject(thread, 5000);
     CloseHandle(thread);
     VirtualFreeEx(process, remote_mem, 0, MEM_RELEASE);
     
-    write_log("[+] Injection successful!");
+    write_log("[+] Injection successful (LoadLibrary)");
     return true;
 }
 
-// ============================================================
-// 7. ИНЖЕКТ ЧЕРЕЗ QUEUEUSERAPC (Более скрытный)
-// ============================================================
-
-bool inject_dll_apc(HANDLE process, const char* dll_path) {
+bool inject_method2_apc(HANDLE process) {
     write_log("[*] Injecting via QueueUserAPC...");
     
     HMODULE kernel32 = GetModuleHandleA("kernel32.dll");
@@ -235,232 +299,300 @@ bool inject_dll_apc(HANDLE process, const char* dll_path) {
     LPVOID load_library = (LPVOID)GetProcAddress(kernel32, "LoadLibraryA");
     if (!load_library) return false;
     
-    size_t path_len = strlen(dll_path) + 1;
+    size_t path_len = strlen(g_dll_path) + 1;
     LPVOID remote_mem = VirtualAllocEx(process, NULL, path_len, MEM_COMMIT | MEM_RESERVE, PAGE_READWRITE);
     if (!remote_mem) return false;
     
-    if (!WriteProcessMemory(process, remote_mem, dll_path, path_len, NULL)) {
+    if (!WriteProcessMemory(process, remote_mem, g_dll_path, path_len, NULL)) {
         VirtualFreeEx(process, remote_mem, 0, MEM_RELEASE);
         return false;
     }
     
-    // Получаем список потоков процесса
-    HANDLE snapshot = CreateToolhelp32Snapshot(TH32CS_SNAPTHREAD, 0);
-    if (snapshot == INVALID_HANDLE_VALUE) {
+    DWORD pid = GetProcessId(process);
+    HANDLE snap = CreateToolhelp32Snapshot(TH32CS_SNAPTHREAD, 0);
+    if (snap == INVALID_HANDLE_VALUE) {
         VirtualFreeEx(process, remote_mem, 0, MEM_RELEASE);
         return false;
     }
     
     THREADENTRY32 entry = { sizeof(THREADENTRY32) };
-    DWORD pid = GetProcessId(process);
     bool injected = false;
     
-    if (Thread32First(snapshot, &entry)) {
+    if (Thread32First(snap, &entry)) {
         do {
             if (entry.th32OwnerProcessID == pid) {
                 HANDLE thread = OpenThread(THREAD_ALL_ACCESS, FALSE, entry.th32ThreadID);
                 if (thread) {
-                    // Откладываем APC в очередь потока
                     if (QueueUserAPC((PAPCFUNC)load_library, thread, (ULONG_PTR)remote_mem)) {
                         injected = true;
-                        write_log("[+] APC queued to thread %d", entry.th32ThreadID);
                         CloseHandle(thread);
                         break;
                     }
                     CloseHandle(thread);
                 }
             }
-        } while (Thread32Next(snapshot, &entry));
+        } while (Thread32Next(snap, &entry));
     }
     
-    CloseHandle(snapshot);
+    CloseHandle(snap);
     if (!injected) {
         VirtualFreeEx(process, remote_mem, 0, MEM_RELEASE);
-        write_log("[!] Failed to inject via APC");
         return false;
     }
     
-    write_log("[+] Injection successful!");
+    write_log("[+] Injection successful (APC)");
     return true;
 }
 
-// ============================================================
-// 8. ИНЖЕКТ ЧЕРЕЗ SETWINDOWSHOOKEX (Самый скрытный)
-// ============================================================
-
-HMODULE g_hook_dll = NULL;
-HHOOK g_hook = NULL;
-
-LRESULT CALLBACK HookProc(int code, WPARAM wParam, LPARAM lParam) {
-    return CallNextHookEx(g_hook, code, wParam, lParam);
-}
-
-bool inject_dll_hook(HWND target_hwnd, const char* dll_path) {
+bool inject_method3_hook() {
     write_log("[*] Injecting via SetWindowsHookEx...");
     
-    // Загружаем DLL в наш процесс
-    g_hook_dll = LoadLibraryA(dll_path);
-    if (!g_hook_dll) {
-        write_log("[!] Failed to load DLL into injector");
+    HWND hwnd = FindWindowA(NULL, "Team Fortress 2");
+    if (!hwnd) {
+        hwnd = FindWindowA(NULL, "Half-Life 2");
+    }
+    if (!hwnd) return false;
+    
+    HMODULE dll = LoadLibraryA(g_dll_path);
+    if (!dll) return false;
+    
+    FARPROC proc = GetProcAddress(dll, "DllMain");
+    if (!proc) {
+        proc = GetProcAddress(dll, "entry");
+    }
+    if (!proc) {
+        FreeLibrary(dll);
         return false;
     }
     
-    // Получаем адрес процедуры хука
-    FARPROC hook_proc = GetProcAddress(g_hook_dll, "HookProc");
-    if (!hook_proc) {
-        // Если нет HookProc, используем любую экспортированную функцию
-        hook_proc = GetProcAddress(g_hook_dll, "DllMain");
-        if (!hook_proc) {
-            write_log("[!] Failed to get hook procedure");
-            FreeLibrary(g_hook_dll);
-            return false;
-        }
-    }
-    
-    // Устанавливаем хук на WH_GETMESSAGE (внедряется в процесс)
-    g_hook = SetWindowsHookExA(WH_GETMESSAGE, (HOOKPROC)hook_proc, g_hook_dll, GetWindowThreadProcessId(target_hwnd, NULL));
-    if (!g_hook) {
-        write_log("[!] Failed to set hook");
-        FreeLibrary(g_hook_dll);
+    HHOOK hook = SetWindowsHookExA(WH_GETMESSAGE, (HOOKPROC)proc, dll, GetWindowThreadProcessId(hwnd, NULL));
+    if (!hook) {
+        FreeLibrary(dll);
         return false;
     }
     
-    // Отправляем сообщение, чтобы DLL загрузилась
-    PostMessageA(target_hwnd, WM_USER + 1, 0, 0);
+    PostMessageA(hwnd, WM_USER + 1, 0, 0);
     Sleep(1000);
     
-    // Снимаем хук
-    UnhookWindowsHookEx(g_hook);
-    FreeLibrary(g_hook_dll);
-    g_hook = NULL;
-    g_hook_dll = NULL;
+    UnhookWindowsHookEx(hook);
+    FreeLibrary(dll);
     
-    write_log("[+] Injection successful!");
+    write_log("[+] Injection successful (Hook)");
     return true;
 }
 
 // ============================================================
-// 9. ОСНОВНАЯ ФУНКЦИЯ
+// 9. ЗАПУСК TF2 И ИНЖЕКТ
 // ============================================================
 
-void inject() {
-    write_log("========================================");
-    write_log("[*] TF2 Cheat Silent Injector v2.0");
-    write_log("[*] Time: %s", __TIMESTAMP__);
-    
-    // Инициализация
-    init_paths();
-    
-    // Проверяем наличие DLL
-    if (GetFileAttributesA(g_dll_path) == INVALID_FILE_ATTRIBUTES) {
-        write_log("[!] DLL not found: %s", g_dll_path);
-        return;
+bool launch_and_inject() {
+    char* steam = find_steam();
+    if (!steam) {
+        write_log("[!] Steam not found!");
+        return false;
     }
-    write_log("[+] DLL found: %s", g_dll_path);
     
-    // Останавливаем VAC
-    stop_vac();
+    write_log("[+] Steam found: %s", steam);
     
-    // Ищем TF2
-    DWORD pid = find_process("hl2.exe");
-    if (pid == 0) pid = find_process("tf2.exe");
+    // Запускаем TF2
+    char cmd[MAX_PATH];
+    sprintf(cmd, "\"%s\\steam.exe\" -applaunch 440", steam);
     
-    if (pid == 0) {
-        write_log("[!] TF2 process not found, retrying...");
-        Sleep(1000);
+    STARTUPINFOA si = { sizeof(STARTUPINFOA) };
+    PROCESS_INFORMATION pi;
+    si.dwFlags = STARTF_USESHOWWINDOW;
+    si.wShowWindow = SW_HIDE;
+    
+    if (!CreateProcessA(NULL, cmd, NULL, NULL, FALSE, CREATE_NO_WINDOW, NULL, NULL, &si, &pi)) {
+        write_log("[!] Failed to launch TF2");
+        return false;
+    }
+    
+    CloseHandle(pi.hProcess);
+    CloseHandle(pi.hThread);
+    
+    write_log("[+] TF2 launched, waiting for process...");
+    
+    // Ждём загрузки процесса (до 30 секунд)
+    DWORD pid = 0;
+    for (int i = 0; i < 60; i++) {
         pid = find_process("hl2.exe");
         if (pid == 0) pid = find_process("tf2.exe");
+        if (pid != 0) break;
+        Sleep(500);
     }
     
     if (pid == 0) {
-        write_log("[!] TF2 process not found after retry");
-        return;
+        write_log("[!] TF2 process not found");
+        return false;
     }
+    
+    write_log("[+] TF2 process found (PID: %d)", pid);
     
     // Открываем процесс
     HANDLE process = OpenProcess(PROCESS_ALL_ACCESS, FALSE, pid);
     if (!process) {
-        // Если не хватает прав, пробуем с минимальными
         process = OpenProcess(PROCESS_CREATE_THREAD | PROCESS_QUERY_INFORMATION | PROCESS_VM_OPERATION | PROCESS_VM_WRITE | PROCESS_VM_READ, FALSE, pid);
     }
     
     if (!process) {
-        write_log("[!] Failed to open process (PID: %d)", pid);
-        return;
+        write_log("[!] Failed to open process");
+        return false;
     }
     
-    write_log("[+] Process opened successfully");
+    // Пробуем методы инжекта
+    bool injected = false;
+    injected = inject_method1_loadlibrary(process);
     
-    // Пробуем разные методы инжекта
-    bool success = false;
-    
-    // Метод 1: LoadLibrary (самый надёжный)
-    if (!success) {
-        success = inject_dll_loadlibrary(process, g_dll_path);
-    }
-    
-    // Метод 2: APC (если первый не сработал)
-    if (!success) {
-        success = inject_dll_apc(process, g_dll_path);
-    }
-    
-    // Метод 3: Hook (если ничего не работает)
-    if (!success) {
-        HWND hwnd = FindWindowA(NULL, "Team Fortress 2");
-        if (hwnd) {
-            success = inject_dll_hook(hwnd, g_dll_path);
-        }
+    if (!injected) {
+        injected = inject_method2_apc(process);
     }
     
     CloseHandle(process);
     
-    if (success) {
-        write_log("[+] Injection completed successfully!");
-        // Скрываем инжектор (процесс сам закроется)
-        FreeConsole();
-        ExitProcess(0);
+    if (!injected) {
+        injected = inject_method3_hook();
+    }
+    
+    if (injected) {
+        write_log("[+] Cheat injected successfully!");
     } else {
         write_log("[!] All injection methods failed!");
     }
+    
+    return injected;
 }
 
 // ============================================================
-// 10. ТОЧКА ВХОДА (GUI скрытая)
+// 10. УСТАНОВКА
+// ============================================================
+
+bool install() {
+    write_log("========================================");
+    write_log("[*] TF2 Cheat Installation");
+    
+    // Получаем путь к текущему EXE
+    GetModuleFileNameA(NULL, g_current_exe, MAX_PATH);
+    
+    // Инициализация путей
+    strcpy(g_install_path, PROGRAM_DATA);
+    strcpy(g_dll_path, UTILS_FOLDER);
+    strcat(g_dll_path, "\\");
+    strcat(g_dll_path, DLL_NAME);
+    
+    // Создаём папки
+    if (!create_directories()) {
+        return false;
+    }
+    
+    // Копируем DLL
+    if (!copy_dll()) {
+        return false;
+    }
+    
+    // Создаём ярлык
+    create_shortcut();
+    
+    write_log("[+] Installation complete!");
+    return true;
+}
+
+// ============================================================
+// 11. АРГУМЕНТЫ КОМАНДНОЙ СТРОКИ
+// ============================================================
+
+typedef struct {
+    bool install;
+    bool launch;
+    bool silent;
+    bool hide;
+} Args;
+
+Args parse_args(char* cmdline) {
+    Args args = { false, false, false, false };
+    
+    if (strstr(cmdline, "-install")) args.install = true;
+    if (strstr(cmdline, "-launch")) args.launch = true;
+    if (strstr(cmdline, "-silent")) args.silent = true;
+    if (strstr(cmdline, "-hide")) args.hide = true;
+    
+    // Если нет аргументов, запускаем всё по умолчанию
+    if (!args.install && !args.launch && !args.silent && !args.hide) {
+        // Проверяем, установлено ли уже
+        if (GetFileAttributesA(UTILS_FOLDER) != INVALID_FILE_ATTRIBUTES &&
+            GetFileAttributesA(g_dll_path) != INVALID_FILE_ATTRIBUTES) {
+            args.launch = true;
+        } else {
+            args.install = true;
+            args.launch = true;
+        }
+    }
+    
+    return args;
+}
+
+// ============================================================
+// 12. ТОЧКА ВХОДА
 // ============================================================
 
 int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine, int nCmdShow) {
-    // Проверяем аргументы командной строки
-    if (strstr(lpCmdLine, "-log")) {
-        g_log = true;
-    }
-    if (strstr(lpCmdLine, "-silent") || strstr(lpCmdLine, "-hide")) {
-        g_silent = true;
+    // Инициализация
+    GetModuleFileNameA(NULL, g_current_exe, MAX_PATH);
+    strcpy(g_install_path, PROGRAM_DATA);
+    strcpy(g_dll_path, UTILS_FOLDER);
+    strcat(g_dll_path, "\\");
+    strcat(g_dll_path, DLL_NAME);
+    
+    // Парсим аргументы
+    Args args = parse_args(lpCmdLine);
+    
+    // Скрываем консоль
+    if (args.hide) {
+        FreeConsole();
+        ShowWindow(GetConsoleWindow(), SW_HIDE);
     }
     
-    // Скрываем окно, если тихий режим
-    if (g_silent) {
-        ShowWindow(GetConsoleWindow(), SW_HIDE);
+    // Установка
+    if (args.install) {
+        if (!install()) {
+            MessageBoxA(NULL, "Installation failed!", "Error", MB_OK | MB_ICONERROR);
+            return 1;
+        }
+        
+        if (!args.silent) {
+            MessageBoxA(NULL, 
+                "TF2 Cheat installed successfully!\n\n"
+                "Files installed to:\n"
+                "C:\\ProgramData\\TF2CHEAT\\utils\\\n\n"
+                "Launcher created on Desktop:\n"
+                "TF2Launcher.lnk\n\n"
+                "Click OK to launch the game.",
+                "Installation Complete",
+                MB_OK | MB_ICONINFORMATION);
+        }
+    }
+    
+    // Запуск
+    if (args.launch) {
+        launch_and_inject();
+    }
+    
+    // Если не silent, ждём нажатия
+    if (!args.silent && !args.hide) {
+        printf("\nPress any key to exit...\n");
+        system("pause >nul");
         FreeConsole();
     }
-    
-    // Запускаем инжект
-    inject();
     
     return 0;
 }
 
 // ============================================================
-// 11. ВХОД ДЛЯ CONSOLE
+// 13. ВХОД ДЛЯ КОНСОЛИ
 // ============================================================
 
 int main() {
-    // Проверяем, есть ли консоль
-    if (GetConsoleWindow()) {
-        FreeConsole();
-    }
-    
-    inject();
-    return 0;
+    return WinMain(GetModuleHandle(NULL), NULL, GetCommandLineA(), SW_HIDE);
 }
 
 // ============================================================
