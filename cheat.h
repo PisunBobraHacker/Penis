@@ -1,7 +1,7 @@
 /*
  * ============================================================
  * CHEAT.H — TF2 Cheat Header
- * Исправлено: убраны устаревшие заголовки
+ * Исправлено: убраны конфликты с ImGui
  * ============================================================
  */
 
@@ -19,11 +19,12 @@
 #include <tlhelp32.h>
 #include <psapi.h>
 #include <intrin.h>
-
-// ТОЛЬКО d3d9.h, БЕЗ d3dx9.h
 #include <d3d9.h>
 
-// Заменяем устаревшие функции на свои
+// ============================================================
+// 1. СТРУКТУРЫ (БЕЗ КОНФЛИКТОВ С IMGUI)
+// ============================================================
+
 typedef struct {
     float x, y, z;
 } Vector3;
@@ -32,21 +33,41 @@ typedef struct {
     float pitch, yaw, roll;
 } Angles;
 
-// D3DCOLOR для цветов
-#ifndef D3DCOLOR
-typedef DWORD D3DCOLOR;
-#endif
+// НЕ определяем ImVec2 и ImColor — они уже есть в ImGui
 
-// Структуры для ImGui
-typedef struct {
-    float x, y;
-} ImVec2;
+// ============================================================
+// 2. СМЕЩЕНИЯ TF2
+// ============================================================
 
-typedef struct {
-    float r, g, b, a;
-} ImColor;
+#define OFFSET_HEALTH        0xA0
+#define OFFSET_ARMOR         0xA4
+#define OFFSET_TEAM          0xA8
+#define OFFSET_ORIGIN        0x35C
+#define OFFSET_VIEW_OFFSET   0x36C
+#define OFFSET_VELOCITY      0x368
+#define OFFSET_DORMANT       0xE1
+#define OFFSET_LIFESTATE     0x10F
+#define OFFSET_FLAGS         0x104
+#define OFFSET_AMMO          0x150
+#define OFFSET_WEAPON        0x12C
+#define OFFSET_ITEM_DEF      0x1F0
+#define OFFSET_ZOOMED        0x1A0
+#define OFFSET_SCOPED        0x19C
+#define OFFSET_FLASH_ALPHA   0x1A4
+#define OFFSET_SMOKE_ALPHA   0x1A8
+#define OFFSET_PUNCH_ANGLE   0x4C
+#define OFFSET_AIM_PUNCH     0x50
+#define OFFSET_VIEW_PUNCH    0x54
+#define OFFSET_SPREAD        0x58
+#define OFFSET_CROSSHAIR     0xB9C
+#define OFFSET_GLOW_INDEX    0xA8
+#define OFFSET_NAME          0x140
+#define OFFSET_ANGLE         0x48C
 
-// Остальные структуры...
+// ============================================================
+// 3. СТРУКТУРА ИГРОКА
+// ============================================================
+
 typedef struct {
     uintptr_t ptr;
     int health;
@@ -100,7 +121,7 @@ typedef struct {
 } Player;
 
 // ============================================================
-// НАСТРОЙКИ (все фичи)
+// 4. НАСТРОЙКИ
 // ============================================================
 
 typedef struct {
@@ -112,83 +133,49 @@ typedef struct {
     bool aimbot_ignore_cloaked;
     bool aimbot_ignore_disguised;
     bool aimbot_priority_head;
-    bool aimbot_priority_visible;
-    bool aimbot_priority_distance;
-    bool aimbot_priority_health;
     int aimbot_fov;
     int aimbot_smooth;
     int aimbot_bone;
     int aimbot_min_damage;
-    bool aimbot_auto_switch;
-    bool aimbot_auto_fire;
     bool aimbot_rcs;
     int aimbot_rcs_x;
     int aimbot_rcs_y;
-    int aimbot_accuracy;
-    int aimbot_hitchance;
-    int aimbot_shot_delay;
     
     // ESP
     bool esp_enabled;
     bool esp_box;
-    bool esp_box_3d;
-    bool esp_box_corner;
     bool esp_health_bar;
     bool esp_health_text;
-    bool esp_armor_bar;
     bool esp_name;
     bool esp_weapon;
     bool esp_distance;
     bool esp_snaplines;
     bool esp_glow;
-    int esp_glow_color;
     bool esp_visible_only;
     bool esp_team_check;
-    bool esp_rank;
-    bool esp_scope;
-    bool esp_head_dot;
     
     // Misc
     bool bhop_enabled;
     bool bhop_auto_strafe;
-    bool bhop_always;
     bool triggerbot_enabled;
     int triggerbot_delay;
-    bool triggerbot_scope;
-    bool triggerbot_zoom;
     bool auto_strafe;
-    int auto_strafe_type;
     bool anti_aim;
     int anti_aim_pitch;
     int anti_aim_yaw;
-    int anti_aim_type;
     bool anti_aim_desync;
-    bool anti_aim_fake;
     bool no_recoil;
     bool no_spread;
-    bool auto_peek;
-    int auto_peek_distance;
-    bool auto_rocket_jump;
-    bool auto_pipe_det;
-    int auto_pipe_det_radius;
-    bool auto_air_stuck;
     bool fake_lag;
     int fake_lag_amount;
     bool fake_duck;
     bool third_person;
     int third_person_distance;
-    bool slow_walk;
-    int slow_walk_speed;
-    bool quick_switch;
-    int quick_switch_weapon;
     
     // Visuals
     bool no_scope;
     bool no_zoom;
     bool full_bright;
-    bool transparent_players;
-    int transparent_players_amount;
-    bool wireframe_smoke;
     bool remove_fog;
     bool remove_skybox;
     bool night_mode;
@@ -197,24 +184,15 @@ typedef struct {
     int no_flash_amount;
     bool no_smoke;
     bool no_blood;
-    bool no_visual_recoil;
-    bool no_hands;
-    bool no_world;
-    bool no_sky;
-    bool no_water;
     
     // Rage
     bool rage_mode;
     bool rage_auto_wall;
     int rage_auto_wall_min_damage;
     bool rage_resolver;
-    int rage_resolver_type;
     bool rage_double_tap;
     int rage_double_tap_shift;
     bool rage_anti_exploit;
-    bool rage_force_safe;
-    bool rage_force_autofire;
-    bool rage_force_autoscope;
     bool rage_force_hs;
     
     // Skins
@@ -225,12 +203,6 @@ typedef struct {
     float skin_changer_wear;
     int skin_changer_seed;
     int skin_changer_stattrak;
-    bool model_changer;
-    int model_changer_player;
-    int model_changer_weapon;
-    int model_changer_hands;
-    int model_changer_knife;
-    int model_changer_glove;
     
     // Meme
     bool misc_draw_penis;
@@ -239,12 +211,6 @@ typedef struct {
     bool misc_draw_breasts;
     int misc_draw_breasts_size;
     int misc_draw_breasts_color;
-    bool misc_draw_butt;
-    int misc_draw_butt_size;
-    int misc_draw_butt_color;
-    bool misc_draw_hearts;
-    int misc_draw_hearts_size;
-    int misc_draw_hearts_color;
     bool misc_rainbow;
     int misc_rainbow_speed;
     bool misc_custom_crosshair;
@@ -257,32 +223,19 @@ typedef struct {
     int misc_kill_sound_volume;
     bool misc_hit_marker;
     int misc_hit_marker_time;
-    bool misc_damage_indicator;
-    int misc_damage_indicator_time;
-    bool misc_spectator_list;
     bool misc_watermark;
     char misc_watermark_text[64];
     bool misc_fps_counter;
-    int misc_fps_counter_style;
     bool misc_ping_counter;
-    bool misc_net_graph;
     bool misc_log;
     char misc_log_file[64];
     bool misc_config_save;
     bool misc_config_load;
     char misc_config_name[64];
-    bool misc_auto_update;
-    char misc_update_url[256];
-    bool misc_debug;
-    bool misc_debug_log;
-    bool misc_debug_console;
     
     // Unlock
     bool misc_unlock_all;
     bool misc_unlock_crates;
-    bool misc_unlock_paints;
-    bool misc_unlock_stickers;
-    bool misc_unlock_music;
     bool misc_unlock_achievements;
     bool misc_unlock_stats;
     bool misc_unlock_rank;
@@ -290,26 +243,20 @@ typedef struct {
     int misc_unlock_prestige;
     int misc_unlock_kills;
     int misc_unlock_heads;
-    int misc_unlock_domination;
-    int misc_unlock_revenge;
     int misc_unlock_playtime;
     int misc_unlock_wins;
     int misc_unlock_streak;
-    int misc_unlock_best_streak;
     int misc_unlock_hs;
-    int misc_unlock_shots;
-    int misc_unlock_hits;
     int misc_unlock_damage;
     float misc_unlock_accuracy;
     float misc_unlock_rating;
     char misc_unlock_rank_name[32];
     char misc_unlock_medal[32];
     char misc_unlock_trophy[32];
-    bool misc_unlock_achievement_all;
 } Settings;
 
 // ============================================================
-// ГЛОБАЛЬНЫЕ ПЕРЕМЕННЫЕ
+// 5. ГЛОБАЛЬНЫЕ ПЕРЕМЕННЫЕ
 // ============================================================
 
 extern Settings g_settings;
@@ -323,10 +270,9 @@ extern uintptr_t g_glow_manager;
 extern Angles g_view_angles;
 extern bool g_menu_open;
 extern HWND g_hwnd;
-extern HANDLE g_process;
 
 // ============================================================
-// ПРОТОТИПЫ ФУНКЦИЙ
+// 6. ПРОТОТИПЫ ФУНКЦИЙ
 // ============================================================
 
 // Core
@@ -336,7 +282,7 @@ void setup_hooks();
 void remove_hooks();
 void entry();
 
-// Memory
+// Entity
 uintptr_t get_entity(int index);
 void update_players();
 bool is_visible(uintptr_t ent);
@@ -383,7 +329,6 @@ void run_model_changer();
 void apply_no_scope();
 void apply_no_zoom();
 void apply_full_bright();
-void apply_transparent_players();
 void apply_remove_fog();
 void apply_remove_skybox();
 void apply_night_mode();
@@ -406,11 +351,13 @@ void __fastcall hkCreateMove(void* ecx, void* edx, float sample, void* cmd);
 long __stdcall hkEndScene(IDirect3DDevice9* device);
 
 // ============================================================
-// IMGUI ВКЛЮЧЕНИЯ
+// 7. IMGUI — ПРАВИЛЬНОЕ ПОДКЛЮЧЕНИЕ
 // ============================================================
 
+#ifdef __cplusplus
 #include "imgui.h"
 #include "imgui_impl_win32.h"
 #include "imgui_impl_dx9.h"
+#endif
 
 #endif // CHEAT_H
