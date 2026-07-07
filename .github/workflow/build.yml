@@ -1,0 +1,64 @@
+name: Build TF2 Cheat
+
+on:
+  push:
+    branches: [ main, master ]
+  release:
+    types: [ created ]
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: windows-latest
+    
+    steps:
+    - name: Checkout
+      uses: actions/checkout@v3
+    
+    - name: Setup MSVC
+      uses: ilammy/msvc-dev-cmd@v1
+    
+    - name: Install dependencies
+      shell: bash
+      run: |
+        mkdir libs
+        git clone --depth 1 https://github.com/ocornut/imgui.git libs/imgui
+        git clone --depth 1 https://github.com/TsudaKageyu/minhook.git libs/minhook
+        mkdir build
+    
+    - name: Build Cheat DLL
+      shell: cmd
+      run: |
+        cl /nologo /O2 /GS- /W0 /LD /MT ^
+           /I"libs\imgui" /I"libs\minhook\include" ^
+           tf2cheat.c ^
+           libs\imgui\*.cpp ^
+           libs\minhook\src\*.c ^
+           /link /OUT:build\tf2cheat.dll ^
+           /PDB:NONE ^
+           user32.lib gdi32.lib opengl32.lib d3d9.lib d3dx9.lib advapi32.lib
+    
+    - name: Build Launcher
+      shell: cmd
+      run: |
+        cl /nologo /O2 /GS- /W0 /MT ^
+           /DNDEBUG /D_WIN32_WINNT=0x0600 ^
+           TF2Launcher.c ^
+           /link /OUT:build\TF2Launcher.exe ^
+           /SUBSYSTEM:WINDOWS ^
+           kernel32.lib user32.lib advapi32.lib shell32.lib shlwapi.lib ole32.lib
+    
+    - name: Copy files
+      shell: cmd
+      run: |
+        copy build\tf2cheat.dll build\utils\
+        copy cheat.h build\
+    
+    - name: Upload artifacts
+      uses: actions/upload-artifact@v4
+      with:
+        name: tf2cheat
+        path: |
+          build\tf2cheat.dll
+          build\TF2Launcher.exe
+          build\cheat.h
