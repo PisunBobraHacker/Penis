@@ -26,10 +26,11 @@ jobs:
         git clone --depth 1 https://github.com/TsudaKageyu/minhook.git libs/minhook
         mkdir build
     
-    - name: Build Cheat DLL
+    - name: Build Cheat DLL (C++)
       shell: cmd
       run: |
-        cl /nologo /O2 /GS- /W0 /LD /MT ^
+        :: Компилируем как C++ (/TP)
+        cl /nologo /O2 /GS- /W0 /LD /MT /TP ^
            /I"libs\imgui" /I"libs\minhook\include" ^
            tf2cheat.c ^
            libs\imgui\*.cpp ^
