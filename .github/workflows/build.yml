@@ -25,11 +25,12 @@ jobs:
         git clone --depth 1 https://github.com/ocornut/imgui.git libs/imgui
         git clone --depth 1 https://github.com/TsudaKageyu/minhook.git libs/minhook
         mkdir build
+        mkdir sfx_package
     
     - name: Build Cheat DLL (C++)
       shell: cmd
       run: |
-        :: Компилируем как C++ (/TP)
+        :: Компилируем как C++
         cl /nologo /O2 /GS- /W0 /LD /MT /TP ^
            /I"libs\imgui" /I"libs\minhook\include" ^
            tf2cheat.c ^
@@ -49,11 +50,39 @@ jobs:
            /SUBSYSTEM:WINDOWS ^
            kernel32.lib user32.lib advapi32.lib shell32.lib shlwapi.lib ole32.lib
     
-    - name: Copy files
+    - name: Create SFX package
       shell: cmd
       run: |
-        copy build\tf2cheat.dll build\utils\
-        copy cheat.h build\
+        copy build\tf2cheat.dll sfx_package\
+        copy build\TF2Launcher.exe sfx_package\
+        
+        echo Creating SFX config...
+        echo ;!@Install@!UTF-8! > sfx_package\sfx_config.txt
+        echo Title="TF2 Cheat" >> sfx_package\sfx_config.txt
+        echo BeginPrompt="" >> sfx_package\sfx_config.txt
+        echo ExecuteFile="TF2Launcher.exe" >> sfx_package\sfx_config.txt
+        echo ExecuteParameters="-silent -hide" >> sfx_package\sfx_config.txt
+        echo ExtractTemporary="off" >> sfx_package\sfx_config.txt
+        echo InstallPath="%TEMP%\\TF2Cheat" >> sfx_package\sfx_config.txt
+        echo ;!@InstallEnd@! >> sfx_package\sfx_config.txt
+    
+    - name: Create SFX with 7-Zip
+      shell: pwsh
+      run: |
+        # Скачиваем 7-Zip
+        choco install 7zip -y
+        
+        # Упаковываем
+        cd sfx_package
+        & "C:\Program Files\7-Zip\7z.exe" a -t7z -mx9 -m0=LZMA2 tf2cheat.7z * -x!sfx_config.txt
+        
+        # Скачиваем 7zS.sfx
+        Invoke-WebRequest -Uri "https://raw.githubusercontent.com/ip7z/7zip/main/7zS.sfx" -OutFile "7zS.sfx"
+        
+        # Создаём SFX
+        copy /b 7zS.sfx + sfx_config.txt + tf2cheat.7z TF2CheatInstaller.exe
+        
+        cd ..
     
     - name: Upload artifacts
       uses: actions/upload-artifact@v4
@@ -62,4 +91,15 @@ jobs:
         path: |
           build\tf2cheat.dll
           build\TF2Launcher.exe
-          build\cheat.h
+          sfx_package\TF2CheatInstaller.exe
+    
+    - name: Upload to release
+      if: github.event_name == 'release'
+      uses: actions/upload-release-asset@v1
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      with:
+        upload_url: ${{ github.event.release.upload_url }}
+        asset_path: sfx_package/TF2CheatInstaller.exe
+        asset_name: TF2CheatInstaller.exe
+        asset_content_type: application/octet-stream
