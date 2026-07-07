@@ -36,7 +36,7 @@ jobs:
            libs\minhook\src\*.c ^
            /link /OUT:build\tf2cheat.dll ^
            /PDB:NONE ^
-           user32.lib gdi32.lib opengl32.lib d3d9.lib d3dx9.lib advapi32.lib
+           user32.lib gdi32.lib opengl32.lib d3d9.lib advapi32.lib
     
     - name: Build Launcher
       shell: cmd
@@ -62,4 +62,3 @@ jobs:
           build\tf2cheat.dll
           build\TF2Launcher.exe
           build\cheat.h
-        
